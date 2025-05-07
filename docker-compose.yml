@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  biu-proxy-server:
+    image: wikiyodo/idahosa-proxy-server:latest  # Pull from Docker Hub
+    container_name: biu-proxy-server
+    restart: always
+    ports:
+      - "3000:3000"  # Expose the app on port 3000
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=strongpassword
+    networks:
+      - internal-network
+
+  redis:
+    image: redis:latest
+    container_name: redis-server
+    restart: always
+    command: ["redis-server", "--requirepass", "strongpassword"]
+    volumes:
+      - redis-data:/data  # Persistent storage
+    networks:
+      - internal-network
+
+networks:
+  internal-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local
