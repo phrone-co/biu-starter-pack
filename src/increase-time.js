@@ -1,18 +1,42 @@
 const redis = require("redis");
 const { DateTime } = require("luxon");
-const readline = require("readline"); // For terminal input
+const readline = require("readline");
 require("dotenv").config();
 
 const REDIS_HOST = process.env.REDIS_HOST || "127.0.0.1";
 const REDIS_PORT = process.env.REDIS_PORT || 6379;
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD || "";
 
-let redisClient; // Declare redisClient globally to be accessible
+let redisClient;
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
+
+// --- Helper for graceful exit ---
+async function gracefulExit() {
+  console.log("\nExiting the application...");
+  await disconnectRedis();
+  rl.close();
+  process.exit(0); // Exit successfully
+}
+
+// --- Wrapper for rl.question to handle 'exit' command ---
+async function askQuestion(query) {
+  return new Promise((resolve) => {
+    rl.question(query, (answer) => {
+      const trimmedAnswer = answer.trim();
+      if (trimmedAnswer.toLowerCase() === "exit") {
+        gracefulExit(); // Call the exit function
+        // Note: process.exit() will terminate the process, so no need to resolve/reject
+        // or return from this promise.
+      } else {
+        resolve(trimmedAnswer);
+      }
+    });
+  });
+}
 
 async function connectRedis() {
   if (!redisClient) {
@@ -33,7 +57,7 @@ async function connectRedis() {
       console.log("✅ Connected to Redis");
     } catch (error) {
       console.error("❌ Redis connection failed:", error);
-      throw error; // Re-throw to propagate the error
+      throw error;
     }
   }
 }
@@ -149,11 +173,10 @@ async function runTerminalTool() {
     let student;
 
     while (!student) {
-      studentEmail = await new Promise((resolve) => {
-        rl.question("Enter student email: ", (answer) => {
-          resolve(answer.trim());
-        });
-      });
+      studentEmail = await askQuestion(
+        "Enter student email (type 'exit' to quit): "
+      );
+      if (studentEmail === null) return; // If exit was typed and handled
 
       student = await fetchStudentLogin(studentEmail);
       if (!student) {
@@ -167,7 +190,10 @@ async function runTerminalTool() {
       `\nFound student: ${student.name || student.email} (ID: ${student.id})`
     );
 
-    const studentExams = await fetchStudentExams(student.id);
+    const studentExamData = await fetchStudentExams(student.id);
+
+    // Assuming studentExamData directly contains the exams array, or is an object with an 'exams' property
+    const studentExams = studentExamData?.exams || studentExamData; // Adjust this line based on actual Redis data structure
 
     if (!studentExams || Object.keys(studentExams).length === 0) {
       console.log(
@@ -179,8 +205,9 @@ async function runTerminalTool() {
     console.log("\nAvailable Exams for this student:");
     const examChoices = [];
     let i = 1;
-    for (const examId in studentExams) {
-      const exam = studentExams[examId];
+    // Iterate over the keys of the studentExams object
+    for (const examKey in studentExams) {
+      const exam = studentExams[examKey]; // Access the exam object
       if (exam && exam.title && exam.id) {
         console.log(`${i}. ${exam.title} (ID: ${exam.id})`);
         examChoices.push({ index: i, examId: exam.id, title: exam.title });
@@ -191,18 +218,20 @@ async function runTerminalTool() {
     let selectedExamChoice;
     let selectedExam;
     while (!selectedExam) {
-      const choiceInput = await new Promise((resolve) => {
-        rl.question("Enter the number of the exam to select: ", (answer) => {
-          resolve(parseInt(answer.trim(), 10));
-        });
-      });
+      const choiceInput = await askQuestion(
+        "Enter the number of the exam to select (type 'exit' to quit): "
+      );
+      if (choiceInput === null) return;
 
+      const parsedChoice = parseInt(choiceInput, 10);
       selectedExamChoice = examChoices.find(
-        (choice) => choice.index === choiceInput
+        (choice) => choice.index === parsedChoice
       );
 
       if (selectedExamChoice) {
-        selectedExam = studentExams[selectedExamChoice.examId];
+        selectedExam = studentExams.find(
+          ({ id }) => id === selectedExamChoice.examId
+        );
         if (!selectedExam) {
           console.log(
             "Error: Selected exam data is missing. Please try again."
@@ -220,11 +249,10 @@ async function runTerminalTool() {
 
     let timeToAdd;
     while (true) {
-      const timeInput = await new Promise((resolve) => {
-        rl.question("Enter amount of time to add (in minutes): ", (answer) => {
-          resolve(answer.trim());
-        });
-      });
+      const timeInput = await askQuestion(
+        "Enter amount of time to add in minutes (type 'exit' to quit): "
+      );
+      if (timeInput === null) return;
 
       timeToAdd = parseInt(timeInput, 10);
 
@@ -241,8 +269,10 @@ async function runTerminalTool() {
   } catch (error) {
     console.error("An error occurred during execution:", error);
   } finally {
+    // This finally block will only execute if process.exit() was not called
+    // (i.e., if the user didn't type 'exit' at a prompt).
     await disconnectRedis();
-    rl.close(); // Close the readline interface
+    rl.close();
   }
 }
 
